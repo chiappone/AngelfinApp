@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./angelfin.db"
+}
+
+model Movie {
+  id          String   @id @default(cuid())
+  tmdbId      Int?     @unique
+  imdbId      String?
+  title       String
+  year        Int?
+  posterPath  String?
+  overview    String?
+  mediaType   String   @default("movie") // movie, series, episode
+  filters     Filter[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Filter {
+  id          String   @id @default(cuid())
+  movieId     String
+  movie       Movie    @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  version     Int      @default(1)
+  label       String   // e.g. "Family Friendly", "TV-14", custom name
+  description String?
+  filtersJson String   // the full Angelfin filter JSON
+  source      String   @default("user") // user, ai-generated, videoskip-import
+  isVerified  Boolean  @default(false)
+  downloads   Int      @default(0)
+  createdBy   String?  // user who uploaded
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([movieId])
+  @@index([isVerified])
+}
