@@ -68,6 +68,7 @@ interface MovieRecord {
   filters: FilterRecord[]
   createdAt: string
   updatedAt: string
+  _source?: 'tmdb'
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -152,11 +153,60 @@ export default function Home() {
     }
   }, [searchQuery])
 
+  const addMovie = async (movie: MovieRecord) => {
+    const res = await fetch('/api/movies/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tmdbId: movie.tmdbId,
+        title: movie.title,
+        year: movie.year,
+        posterPath: movie.posterPath,
+        overview: movie.overview,
+        mediaType: movie.mediaType,
+        imdbId: movie.imdbId,
+      }),
+    })
+    if (res.ok) {
+      const saved = await res.json()
+      setSearchResults(prev =>
+        prev.map(m => m.tmdbId === movie.tmdbId && m._source === 'tmdb' ? saved : m)
+      )
+    }
+  }
+
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') searchMovies()
   }
 
   const selectMovie = async (movie: MovieRecord) => {
+    // If movie is from TMDb and not in DB yet, add it first
+    if (movie._source === 'tmdb' && !movie.id.startsWith('c')) {
+      try {
+        const res = await fetch('/api/movies/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tmdbId: movie.tmdbId,
+            title: movie.title,
+            year: movie.year,
+            posterPath: movie.posterPath,
+            overview: movie.overview,
+            mediaType: movie.mediaType,
+            imdbId: movie.imdbId,
+          }),
+        })
+        if (res.ok) {
+          const saved = await res.json()
+          setSelectedMovie(saved)
+          setSearchResults(prev =>
+            prev.map(m => m.tmdbId === movie.tmdbId ? saved : m)
+          )
+          setView('detail')
+          return
+        }
+      } catch { /* fall through */ }
+    }
     try {
       const res = await fetch(`/api/movies/${movie.id}`)
       if (res.ok) {
@@ -315,7 +365,8 @@ export default function Home() {
               </div>
               {view === 'home' && (
                 <div className="flex-1 max-w-md mx-8">
-                  <div className="relative">
+                  <div className="flex gap-2">
+                  <div className="relative flex-1">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       placeholder="Search movies..."
@@ -325,6 +376,10 @@ export default function Home() {
                       onKeyDown={handleSearchKeyDown}
                     />
                   </div>
+                  <Button size="icon" onClick={searchMovies} disabled={loading}>
+                    {loading ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Search className="h-4 w-4" />}
+                  </Button>
+                </div>
                 </div>
               )}
               <div className="flex items-center gap-2">
@@ -571,7 +626,7 @@ function HomePage({
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {searchResults.map((movie) => (
-                <MovieCard key={movie.id} movie={movie} onSelect={() => onSelectMovie(movie)} />
+                <MovieCard key={movie.tmdbId || movie.id} movie={movie} onSelect={() => onSelectMovie(movie)} onAdd={movie._source === 'tmdb' ? () => onAddMovie(movie) : undefined} />
               ))}
             </div>
           )}
@@ -583,8 +638,14 @@ function HomePage({
 
 // ─── Movie Card ─────────────────────────────────────────────────────────────
 
-function MovieCard({ movie, onSelect }: { movie: MovieRecord; onSelect: () => void }) {
+function MovieCard({ movie, onSelect, onAdd }: { movie: MovieRecord; onSelect: () => void; onAdd?: () => void }) {
   const poster = posterUrl(movie.posterPath)
+  const [adding, setAdding] = useState(false)
+  const handleAdd = async () => {
+    setAdding(true)
+    await onAdd?.()
+    setAdding(false)
+  }
   return (
     <Card
       className="cursor-pointer hover:shadow-md transition-shadow group"
@@ -613,11 +674,25 @@ function MovieCard({ movie, onSelect }: { movie: MovieRecord; onSelect: () => vo
               {movie.tmdbId && (
                 <Badge variant="secondary" className="text-xs">TMDB</Badge>
               )}
+              {movie._source === 'tmdb' && (!movie.id || !movie.id.startsWith('c')) && (
+                <Badge variant="outline" className="text-xs text-amber-500 border-amber-500">New</Badge>
+              )}
             </div>
             <div className="flex items-center gap-1 mt-2 text-sm text-muted-foreground">
               <Filter className="h-3.5 w-3.5" />
               {movie.filters.length} filter{movie.filters.length !== 1 ? 's' : ''}
             </div>
+            {onAdd && (
+              <Button
+                size="sm"
+                className="mt-2"
+                onClick={(e) => { e.stopPropagation(); handleAdd() }}
+                disabled={adding}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                {adding ? 'Adding...' : 'Add to Library'}
+              </Button>
+            )}
           </div>
           <ChevronRight className="h-4 w-4 text-muted-foreground self-center opacity-0 group-hover:opacity-100 transition-opacity" />
         </div>
