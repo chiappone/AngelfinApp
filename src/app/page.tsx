@@ -6,7 +6,7 @@ import {
   Search, Download, Upload, Trash2, Edit3, ArrowLeft,
   ChevronRight, Eye, Moon, Sun, Filter, FileJson,
   CheckCircle2, Clock, Tag, Info, AlertCircle, Shield,
-  Film, Tv, Layers, BarChart3, Plus, X
+  Film, Tv, Layers, BarChart3, Plus, X, Sparkles, Loader2
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -136,6 +136,16 @@ export default function Home() {
   const [editLabel, setEditLabel] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editSubmitting, setEditSubmitting] = useState(false)
+
+  // Generate filter state
+  const [generateOpen, setGenerateOpen] = useState(false)
+  const [generateCategories, setGenerateCategories] = useState<string[]>([])
+  const [generateSubtitleFile, setGenerateSubtitleFile] = useState<File | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [generateProgress, setGenerateProgress] = useState('')
+  const [generateResult, setGenerateResult] = useState<{ total: number; stats: Record<string, number> } | null>(null)
+  const [generateError, setGenerateError] = useState('')
+  const generateFileRef = useRef<HTMLInputElement>(null)
 
   const searchMovies = useCallback(async () => {
     if (!searchQuery.trim()) return
@@ -341,6 +351,61 @@ export default function Home() {
     }
   }
 
+  const toggleGenerateCategory = (cat: string) => {
+    setGenerateCategories(prev =>
+      prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+    )
+  }
+
+  const handleGenerateFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) setGenerateSubtitleFile(file)
+  }
+
+  const submitGenerate = async () => {
+    if (!selectedMovie) return
+    if (!generateCategories.length) { setGenerateError('Select at least one category'); return }
+    setGenerateError('')
+    setGenerating(true)
+    setGenerateProgress('Starting...')
+    setGenerateResult(null)
+
+    try {
+      let subtitleText: string | undefined
+      if (generateSubtitleFile) {
+        subtitleText = await generateSubtitleFile.text()
+      }
+
+      const res = await fetch(`/api/movies/${selectedMovie.id}/generate-filter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categories: generateCategories, subtitleText }),
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        setGenerateResult({ total: data.totalEntries, stats: data.stats })
+        await refreshMovie()
+      } else {
+        setGenerateError(data.error || 'Generation failed')
+      }
+    } catch (err) {
+      setGenerateError('Network error')
+    } finally {
+      setGenerating(false)
+      setGenerateProgress('')
+    }
+  }
+
+  const closeGenerateDialog = () => {
+    setGenerateOpen(false)
+    setGenerateCategories([])
+    setGenerateSubtitleFile(null)
+    setGenerateError('')
+    setGenerateResult(null)
+    setGenerateProgress('')
+  }
+
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -412,6 +477,7 @@ export default function Home() {
               onViewFilter={setViewerFilter}
               onUploadOpen={() => setUploadOpen(true)}
               onEdit={openEdit}
+              onGenerateOpen={() => setGenerateOpen(true)}
             />
           ) : null}
         </main>
@@ -534,6 +600,123 @@ export default function Home() {
               <DialogDescription>{viewerFilter?.description || 'Filter preview'}</DialogDescription>
             </DialogHeader>
             {viewerFilter && <FilterViewer filter={viewerFilter} />}
+          </DialogContent>
+        </Dialog>
+
+        {/* Generate Filter Dialog */}
+        <Dialog open={generateOpen} onOpenChange={(open) => { if (!open) closeGenerateDialog() }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5" /> Generate Filter</DialogTitle>
+              <DialogDescription>
+                AI-generate a content filter for {selectedMovie?.title} from subtitles
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Categories</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'profanity', label: 'Profanity & Language', desc: 'Wordlist-based' },
+                    { id: 'violence', label: 'Violence & Gore', desc: 'LLM-based' },
+                    { id: 'sexNudity', label: 'Sex & Nudity', desc: 'LLM-based' },
+                    { id: 'hate', label: 'Hate Speech', desc: 'LLM-based' },
+                  ].map(cat => (
+                    <label
+                      key={cat.id}
+                      className={`flex items-start gap-2 rounded-lg border p-3 cursor-pointer transition-colors ${
+                        generateCategories.includes(cat.id)
+                          ? 'border-primary bg-primary/5'
+                          : 'border-muted hover:border-muted-foreground/30'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={generateCategories.includes(cat.id)}
+                        onChange={() => toggleGenerateCategory(cat.id)}
+                        disabled={generating}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <div className="text-sm font-medium">{cat.label}</div>
+                        <div className="text-xs text-muted-foreground">{cat.desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <Label>Subtitle File (optional)</Label>
+                <p className="text-xs text-muted-foreground mb-1.5">
+                  Leave empty to auto-fetch from Jellyfin
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => generateFileRef.current?.click()}
+                    disabled={generating}
+                  >
+                    <Upload className="h-3.5 w-3.5 mr-1" />
+                    {generateSubtitleFile ? generateSubtitleFile.name : 'Upload .srt / .vtt'}
+                  </Button>
+                  {generateSubtitleFile && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setGenerateSubtitleFile(null)}
+                      disabled={generating}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                  <input
+                    ref={generateFileRef}
+                    type="file"
+                    accept=".srt,.vtt"
+                    className="hidden"
+                    onChange={handleGenerateFileChange}
+                  />
+                </div>
+              </div>
+              {generateError && (
+                <div className="flex items-center gap-2 text-destructive text-sm">
+                  <AlertCircle className="h-4 w-4" />
+                  {generateError}
+                </div>
+              )}
+              {generating && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {generateProgress}
+                </div>
+              )}
+              {generateResult && (
+                <div className="rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 p-3 space-y-1">
+                  <div className="text-sm font-medium text-green-800 dark:text-green-300">
+                    Generated {generateResult.total} filter entries
+                  </div>
+                  {Object.entries(generateResult.stats).map(([cat, count]) => (
+                    <div key={cat} className="text-xs text-green-700 dark:text-green-400">
+                      {cat}: {count} entries
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={closeGenerateDialog} disabled={generating}>Cancel</Button>
+              <Button
+                onClick={submitGenerate}
+                disabled={generating || !generateCategories.length}
+              >
+                {generating ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Generating...</>
+                ) : (
+                  <><Sparkles className="h-4 w-4 mr-1" /> Generate</>
+                )}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
@@ -713,6 +896,7 @@ function MovieDetailPage({
   onViewFilter,
   onUploadOpen,
   onEdit,
+  onGenerateOpen,
 }: {
   movie: MovieRecord
   viewerFilter: FilterRecord | null
@@ -723,6 +907,7 @@ function MovieDetailPage({
   onViewFilter: (f: FilterRecord) => void
   onUploadOpen: () => void
   onEdit: (f: FilterRecord) => void
+  onGenerateOpen: () => void
 }) {
   const poster = posterUrl(movie.posterPath)
   return (
@@ -752,6 +937,9 @@ function MovieDetailPage({
                   </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
+                  <Button variant="outline" size="sm" onClick={onGenerateOpen}>
+                    <Sparkles className="h-4 w-4 mr-1" /> Generate
+                  </Button>
                   <Button variant="outline" size="sm" onClick={onUploadOpen}>
                     <Plus className="h-4 w-4 mr-1" /> Add Filter
                   </Button>
