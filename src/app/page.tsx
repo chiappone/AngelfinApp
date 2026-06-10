@@ -6,8 +6,12 @@ import {
   Search, Download, Upload, Trash2, Edit3, ArrowLeft,
   ChevronRight, Eye, Moon, Sun, Filter, FileJson,
   CheckCircle2, Clock, Tag, Info, AlertCircle, Shield,
-  Film, Tv, Layers, BarChart3, Plus, X, Sparkles, Loader2
+  Film, Tv, Layers, BarChart3, Plus, X, Sparkles, Loader2,
+  LogIn
 } from 'lucide-react'
+import { useSession } from 'next-auth/react'
+import { LoginButton } from '@/components/login-button'
+import { UserMenu } from '@/components/user-menu'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -107,6 +111,14 @@ function posterUrl(posterPath: string | null): string | null {
   if (!posterPath) return null
   if (posterPath.startsWith('http')) return posterPath
   return `https://image.tmdb.org/t/p/w342${posterPath}`
+}
+
+// ─── Auth Section (header) ─────────────────────────────────────────────────
+
+function AuthSection() {
+  const { data: session, status } = useSession()
+  if (status === 'loading' || session) return null
+  return <LoginButton />
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -448,6 +460,8 @@ export default function Home() {
                 </div>
               )}
               <div className="flex items-center gap-2">
+                <UserMenu />
+                <AuthSection />
                 <Button variant="ghost" size="icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
                   {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 </Button>
@@ -465,6 +479,7 @@ export default function Home() {
               searchQuery={searchQuery}
               onSearch={searchMovies}
               onSelectMovie={selectMovie}
+              onAddMovie={addMovie}
             />
           ) : selectedMovie ? (
             <MovieDetailPage
@@ -742,12 +757,14 @@ function HomePage({
   searchQuery,
   onSearch,
   onSelectMovie,
+  onAddMovie,
 }: {
   loading: boolean
   searchResults: MovieRecord[]
   searchQuery: string
   onSearch: () => void
   onSelectMovie: (m: MovieRecord) => void
+  onAddMovie: (m: MovieRecord) => void
 }) {
   return (
     <div>
