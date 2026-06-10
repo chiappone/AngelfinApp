@@ -41,6 +41,22 @@ model User {
   image         String?
   accounts      Account[]
   sessions      Session[]
+  settings      Settings[]
+}
+
+model Settings {
+  id        String   @id @default("default")
+  userId    String?  @unique
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  jellyfinBaseUrl String?
+  jellyfinApiKey  String?
+
+  openaiApiKey  String?
+  openaiBaseUrl String?  @default("https://api.openai.com/v1")
+  openaiModel   String?  @default("gpt-4o-mini")
+
+  updatedAt DateTime @updatedAt
 }
 
 model VerificationToken {

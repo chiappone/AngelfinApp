@@ -7,9 +7,10 @@ import {
   ChevronRight, Eye, Moon, Sun, Filter, FileJson,
   CheckCircle2, Clock, Tag, Info, AlertCircle, Shield,
   Film, Tv, Layers, BarChart3, Plus, X, Sparkles, Loader2,
-  LogIn
+  LogIn, Settings
 } from 'lucide-react'
 import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
 import { LoginButton } from '@/components/login-button'
 import { UserMenu } from '@/components/user-menu'
 
@@ -124,6 +125,7 @@ function AuthSection() {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Home() {
+  const router = useRouter()
   const { theme, setTheme } = useTheme()
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<MovieRecord[]>([])
@@ -462,6 +464,9 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 <UserMenu />
                 <AuthSection />
+                <Button variant="ghost" size="icon" onClick={() => router.push('/settings')}>
+                  <Settings className="h-4 w-4" />
+                </Button>
                 <Button variant="ghost" size="icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
                   {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 </Button>
