@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useTheme } from 'next-themes'
 import {
   Search, Download, Upload, Trash2, Edit3, ArrowLeft,
@@ -127,6 +127,8 @@ function AuthSection() {
 export default function Home() {
   const router = useRouter()
   const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<MovieRecord[]>([])
   const [selectedMovie, setSelectedMovie] = useState<MovieRecord | null>(null)
@@ -468,7 +470,7 @@ export default function Home() {
                   <Settings className="h-4 w-4" />
                 </Button>
                 <Button variant="ghost" size="icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-                  {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  {mounted && (theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />)}
                 </Button>
               </div>
             </div>
@@ -1117,16 +1119,16 @@ function FilterCard({
               <TooltipContent>Edit</TooltipContent>
             </Tooltip>
             <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertDialogTrigger asChild>
                     <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
                       <Trash2 className="h-4 w-4" />
                     </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Delete</TooltipContent>
-                </Tooltip>
-              </AlertDialogTrigger>
+                  </AlertDialogTrigger>
+                </TooltipTrigger>
+                <TooltipContent>Delete</TooltipContent>
+              </Tooltip>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete Filter</AlertDialogTitle>
@@ -1136,7 +1138,7 @@ function FilterCard({
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={onDelete} className="bg-destructive text-white hover:bg-destructive/90">Delete</AlertDialogAction>
+                  <AlertDialogAction onClick={async () => { await onDelete() }} className="bg-destructive text-white hover:bg-destructive/90">Delete</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -1164,7 +1166,7 @@ function FilterViewer({ filter }: { filter: FilterRecord }) {
   // Find total duration from entries
   let maxTime = 0
   for (const e of entries) {
-    const end = parseTime(e.end ?? e.end_time)
+    const end = parseTime(e.endMs ?? e.end ?? e.end_time) / 1000
     if (end > maxTime) maxTime = end
   }
 
@@ -1184,22 +1186,24 @@ function FilterViewer({ filter }: { filter: FilterRecord }) {
             {/* Timeline bar */}
             <div className="relative h-6 bg-muted rounded overflow-hidden">
               {entries.slice(0, 100).map((e, i) => {
-                const start = parseTime(e.start ?? e.start_time)
-                const end = parseTime(e.end ?? e.end_time)
+                const start = parseTime(e.startMs ?? e.start ?? e.start_time) / 1000
+                const end = parseTime(e.endMs ?? e.end ?? e.end_time) / 1000
                 if (maxTime === 0) return null
                 const left = (start / maxTime) * 100
                 const width = Math.max(0.5, ((end - start) / maxTime) * 100)
-                const action = e.action || 'skip'
+                const category = e.category || 'misc'
                 const color =
-                  action === 'mute' ? 'bg-amber-500' :
-                  action === 'blur' ? 'bg-purple-500' :
-                  'bg-red-500'
+                  category === 'language' ? 'bg-blue-500' :
+                  category === 'sexNudity' ? 'bg-pink-500' :
+                  category === 'violence' ? 'bg-red-500' :
+                  category === 'hate' ? 'bg-orange-500' :
+                  'bg-gray-500'
                 return (
                   <div
                     key={i}
                     className={`absolute top-0 h-full ${color} opacity-70 rounded-sm`}
                     style={{ left: `${left}%`, width: `${width}%` }}
-                    title={`${e.type || action}: ${formatTime(start)} - ${formatTime(end)}${e.description ? ` — ${e.description}` : ''}`}
+                    title={`${category}: ${formatTime(start)} - ${formatTime(end)}${e.label ? ` — ${e.label}` : ''}`}
                   />
                 )
               })}
@@ -1211,26 +1215,34 @@ function FilterViewer({ filter }: { filter: FilterRecord }) {
 
             {/* Legend */}
             <div className="flex gap-4 text-xs">
-              <span className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded-sm" /> Skip</span>
-              <span className="flex items-center gap-1"><div className="w-3 h-3 bg-amber-500 rounded-sm" /> Mute</span>
-              <span className="flex items-center gap-1"><div className="w-3 h-3 bg-purple-500 rounded-sm" /> Blur</span>
+              <span className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500 rounded-sm" /> Language</span>
+              <span className="flex items-center gap-1"><div className="w-3 h-3 bg-pink-500 rounded-sm" /> Sex & Nudity</span>
+              <span className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded-sm" /> Violence</span>
+              <span className="flex items-center gap-1"><div className="w-3 h-3 bg-orange-500 rounded-sm" /> Hate</span>
             </div>
 
             {/* Entries list */}
             <ScrollArea className="h-48">
               <div className="space-y-1">
                 {entries.slice(0, 200).map((e, i) => {
-                  const start = parseTime(e.start ?? e.start_time)
-                  const end = parseTime(e.end ?? e.end_time)
-                  const action = e.action || 'skip'
+                  const start = parseTime(e.startMs ?? e.start ?? e.start_time) / 1000
+                  const end = parseTime(e.endMs ?? e.end ?? e.end_time) / 1000
+                  const category = e.category || 'misc'
+                  const catColor =
+                    category === 'language' ? 'bg-blue-500' :
+                    category === 'sexNudity' ? 'bg-pink-500' :
+                    category === 'violence' ? 'bg-red-500' :
+                    category === 'hate' ? 'bg-orange-500' :
+                    'bg-gray-500'
+                  const catLabel = category === 'sexNudity' ? 'Sex & Nudity' : category.charAt(0).toUpperCase() + category.slice(1)
                   return (
                     <div key={i} className="flex items-center gap-3 text-sm py-1 px-2 rounded hover:bg-muted/50">
                       <span className="text-muted-foreground w-20 font-mono text-xs">
                         {formatTime(start)} - {formatTime(end)}
                       </span>
-                      <Badge variant="outline" className="text-xs">{action}</Badge>
-                      <span className="text-muted-foreground text-xs">{e.type || ''}</span>
-                      <span className="truncate text-xs">{e.description || ''}</span>
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: catColor.includes('blue') ? '#3b82f6' : catColor.includes('pink') ? '#ec4899' : catColor.includes('red') ? '#ef4444' : catColor.includes('orange') ? '#f97316' : '#6b7280' }} />
+                      <Badge variant="outline" className="text-xs">{catLabel}</Badge>
+                      <span className="truncate text-xs text-muted-foreground">{e.label || e.description || ''}</span>
                     </div>
                   )
                 })}

@@ -33,11 +33,11 @@ export async function PUT(req: Request) {
   const settings = await db.settings.upsert({
     where: { userId: session.user.id },
     update: {
-      jellyfinBaseUrl: body.jellyfinBaseUrl,
-      jellyfinApiKey: body.jellyfinApiKey,
-      openaiApiKey: body.openaiApiKey,
-      openaiBaseUrl: body.openaiBaseUrl,
-      openaiModel: body.openaiModel,
+      ...(body.jellyfinBaseUrl !== undefined && { jellyfinBaseUrl: body.jellyfinBaseUrl }),
+      ...(body.jellyfinApiKey !== undefined && { jellyfinApiKey: body.jellyfinApiKey }),
+      ...(body.openaiApiKey !== undefined && { openaiApiKey: body.openaiApiKey }),
+      ...(body.openaiBaseUrl !== undefined && { openaiBaseUrl: body.openaiBaseUrl }),
+      ...(body.openaiModel !== undefined && { openaiModel: body.openaiModel }),
     },
     create: {
       userId: session.user.id,

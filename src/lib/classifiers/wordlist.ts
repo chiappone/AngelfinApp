@@ -57,12 +57,12 @@ export function classifyWordlist(cues: SubtitleCue[], pad = 120): FilterEntry[] 
           id: `lang-${n.toString().padStart(4, '0')}`,
           startMs: Math.max(0, cue.start - pad),
           endMs: cue.end + pad,
-          action: 'mute',
+          action: 'skip',
           category: cat,
           subcategory: 'profanity',
           severity: sev,
           label: cue.text,
-          fadeMs: 40,
+          fadeMs: 0,
         })
         break // one hit per cue is enough
       }

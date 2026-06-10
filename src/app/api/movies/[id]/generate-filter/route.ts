@@ -1,56 +1,79 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { parseSubtitles } from '@/lib/subtitle-parser'
 import { classifyWordlist } from '@/lib/classifiers/wordlist'
 import { classifyLLM } from '@/lib/classifiers/llm'
 import type { FilterEntry } from '@/lib/classifiers/wordlist'
 
-const JELLYFIN_BASE_URL = process.env.JELLYFIN_BASE_URL || 'http://192.168.69.210:8096'
-const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY || ''
-
-async function fetchJellyfin(path: string) {
-  const url = `${JELLYFIN_BASE_URL.replace(/\/+$/, '')}${path}`
+async function fetchJellyfin(baseUrl: string, apiKey: string, path: string) {
+  const url = `${baseUrl.replace(/\/+$/, '')}${path}`
   const res = await fetch(url, {
-    headers: { 'X-Emby-Token': JELLYFIN_API_KEY },
+    headers: { 'X-Emby-Token': apiKey },
   })
   if (!res.ok) throw new Error(`Jellyfin error ${res.status} for ${path}`)
   return res.json()
 }
 
-async function getSubtitlesFromJellyfin(title: string): Promise<string | null> {
+async function getSubtitlesFromJellyfin(baseUrl: string, apiKey: string, title: string): Promise<string | null> {
   try {
+    const base = baseUrl.replace(/\/+$/, '')
+
     // Search for the movie
-    const results = await fetchJellyfin(`/Items?searchTerm=${encodeURIComponent(title)}&Recursive=true&IncludeItemTypes=Movie&Limit=5`)
+    const results = await fetchJellyfin(baseUrl, apiKey, `/Items?searchTerm=${encodeURIComponent(title)}&Recursive=true&IncludeItemTypes=Movie&Limit=5&Fields=Path,MediaStreams`)
     const items = results.Items || []
     if (!items.length) return null
-
-    // Pick best match
     const item = items[0]
 
-    // Get subtitle streams
-    const mediaSources = await fetchJellyfin(`/Items/${item.Id}/PlaybackInfo`)
-    const mediaSource = mediaSources.MediaSources?.[0]
-    if (!mediaSource) return null
-
-    const subtitleTracks = mediaSource.MediaStreams?.filter(
+    const subtitleTracks = (item.MediaStreams || []).filter(
       (s: { Type: string }) => s.Type === 'Subtitle'
-    ) || []
+    )
+    if (!subtitleTracks.length) return null
 
-    // Prefer English, then first text subtitle
+    // Prefer English SDH/CC, then English, then first text subtitle
     const track = subtitleTracks.find(
-      (s: { Language?: string; IsTextSubtitleStream?: boolean; DeliveryUrl?: string }) =>
-        s.Language?.toLowerCase().startsWith('en') && s.IsTextSubtitleStream && s.DeliveryUrl
+      (s: { Language?: string; IsTextSubtitleStream?: boolean; Title?: string }) =>
+        s.Language?.toLowerCase().startsWith('en') && s.IsTextSubtitleStream && (s.Title?.toLowerCase().includes('sdh') || s.Title?.toLowerCase().includes('cc'))
     ) || subtitleTracks.find(
-      (s: { IsTextSubtitleStream?: boolean; DeliveryUrl?: string }) =>
-        s.IsTextSubtitleStream && s.DeliveryUrl
+      (s: { Language?: string; IsTextSubtitleStream?: boolean }) =>
+        s.Language?.toLowerCase().startsWith('en') && s.IsTextSubtitleStream
+    ) || subtitleTracks.find(
+      (s: { IsTextSubtitleStream?: boolean }) => s.IsTextSubtitleStream
     )
 
-    if (!track?.DeliveryUrl) return null
+    if (!track?.Index) {
+      console.error('[gen-filter] No subtitle track found. Tracks:', subtitleTracks.map((s: any) => ({ idx: s.Index, lang: s.Language, title: s.Title, isText: s.IsTextSubtitleStream })))
+      return null
+    }
 
-    const subUrl = `${JELLYFIN_BASE_URL.replace(/\/+$/, '')}${track.DeliveryUrl}&api_key=${JELLYFIN_API_KEY}`
-    const subRes = await fetch(subUrl)
-    if (!subRes.ok) return null
-    return subRes.text()
+    console.error(`[gen-filter] Selected track: index=${track.Index}, title=${track.Title}, lang=${track.Language}`)
+
+    // Try 1: External subtitle via DeliveryUrl (sidecar subs)
+    if (track.DeliveryUrl) {
+      const subUrl = `${base}${track.DeliveryUrl}&api_key=${apiKey}`
+      const subRes = await fetch(subUrl)
+      if (subRes.ok) return subRes.text()
+    }
+
+    // Try 2: Jellyfin subtitle API for embedded subs
+    // Jellyfin subtitle streaming API: /Videos/{itemId}/{mediaSourceId}/Subtitles/{index}/Stream.srt
+    const subPaths = [
+      `/Videos/${item.Id}/${item.Id}/Subtitles/${track.Index}/Stream.srt`,
+    ]
+    for (const subPath of subPaths) {
+      const subUrl = `${base}${subPath}`
+      console.error(`[gen-filter] Trying subtitle URL: ${subUrl}`)
+      const subRes = await fetch(subUrl, { headers: { 'X-Emby-Token': apiKey } })
+      console.error(`[gen-filter] Subtitle response: ${subRes.status} ${subRes.statusText}`)
+      if (subRes.ok) {
+        const text = await subRes.text()
+        console.error(`[gen-filter] Subtitle text length: ${text.length}, first 100 chars: ${text.substring(0, 100)}`)
+        if (text.trim().length > 10) return text
+      }
+    }
+
+    return null
   } catch (err) {
     console.error('Jellyfin subtitle fetch failed:', err)
     return null
@@ -70,6 +93,30 @@ export async function POST(
     return NextResponse.json({ error: 'At least one category is required' }, { status: 400 })
   }
 
+  // Get session and settings
+  const session = await getServerSession(authOptions)
+  const userId = session?.user?.id
+
+  let jellyfinBaseUrl = process.env.JELLYFIN_BASE_URL
+  let jellyfinApiKey = process.env.JELLYFIN_API_KEY
+  let openaiApiKey = process.env.OPENAI_API_KEY
+  let openaiBaseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+  let openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini'
+
+  // Use user settings if available
+  console.error(`[gen-filter] userId=${userId}, session exists=${!!session}`)
+  if (userId) {
+    const settings = await db.settings.findUnique({ where: { userId } })
+    console.error(`[gen-filter] settings found=${!!settings}, aiKey=${settings?.openaiApiKey?.substring(0, 10) || 'NONE'}`)
+    if (settings) {
+      if (settings.jellyfinBaseUrl) jellyfinBaseUrl = settings.jellyfinBaseUrl
+      if (settings.jellyfinApiKey) jellyfinApiKey = settings.jellyfinApiKey
+      if (settings.openaiApiKey) openaiApiKey = settings.openaiApiKey
+      if (settings.openaiBaseUrl) openaiBaseUrl = settings.openaiBaseUrl
+      if (settings.openaiModel) openaiModel = settings.openaiModel
+    }
+  }
+
   // Get movie
   const movie = await db.movie.findUnique({ where: { id: movieId } })
   if (!movie) {
@@ -79,13 +126,13 @@ export async function POST(
   let subText = subtitleText
 
   // Try Jellyfin if no subtitle provided
-  if (!subText) {
-    subText = await getSubtitlesFromJellyfin(movie.title) || undefined
+  if (!subText && jellyfinBaseUrl && jellyfinApiKey) {
+    subText = await getSubtitlesFromJellyfin(jellyfinBaseUrl, jellyfinApiKey, movie.title) || undefined
   }
 
   if (!subText) {
     return NextResponse.json(
-      { error: 'No subtitles available. Please upload a subtitle file.' },
+      { error: 'No subtitles available. Please configure Jellyfin in Settings or upload a subtitle file.' },
       { status: 400 }
     )
   }
@@ -111,9 +158,11 @@ export async function POST(
 
   if (needsLLM) {
     const llmCategories = categories.filter(c => ['violence', 'sexNudity', 'hate'].includes(c))
-    // We send all categories to LLM but it will filter; we include requested ones in prompt context
-    const entries = await classifyLLM(cues, llmCategories)
-    // Filter to only requested categories (plus language which LLM might catch)
+    const entries = await classifyLLM(cues, llmCategories, {
+      apiKey: openaiApiKey || '',
+      baseUrl: openaiBaseUrl,
+      model: openaiModel,
+    })
     for (const entry of entries) {
       const cat = entry.category
       if (llmCategories.includes(cat) || cat === 'language') {

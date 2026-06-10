@@ -5,6 +5,7 @@ export interface SubtitleCue {
 }
 
 function srtTimeToMs(t: string): number | null {
+  if (!t || typeof t !== 'string') return null
   t = t.trim().replace('.', ',')
   const m = t.match(/(\d+):(\d+):(\d+)[,.](\d+)/)
   if (!m) return null
@@ -16,6 +17,7 @@ function srtTimeToMs(t: string): number | null {
 }
 
 function vttTimeToMs(t: string): number | null {
+  if (!t || typeof t !== 'string') return null
   t = t.trim()
   const m = t.match(/(\d+):(\d+):(\d+)[.](\d+)/)
   if (m) {
@@ -62,7 +64,9 @@ export function parseSubtitles(text: string, format?: 'srt' | 'vtt'): SubtitleCu
     if (timingIdx === -1) continue
 
     const timingLine = lines[timingIdx]
-    const [startStr, , endStr] = timingLine.split('-->')
+    const [startStr, endStr] = timingLine.split('-->')
+
+    if (!startStr || !endStr) continue
 
     const start = timeToMs(startStr, fmt)
     const end = timeToMs(endStr, fmt)
